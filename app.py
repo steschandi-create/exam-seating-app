@@ -59,8 +59,8 @@ def generate_sample_excel():
 # --- 2. MAIN APP INTERFACE ---
 st.title("🎓 Advanced Exam Seating Arrangement System")
 st.markdown(
-    "Configure custom room layouts, block specific seats, and generate"
-    " professional examination reports."
+    "Configure individual room layouts, block precise side-specific seats, and"
+    " generate professional reports."
 )
 
 with st.sidebar:
@@ -104,26 +104,38 @@ with st.sidebar:
       )
     room_layouts[f"Room {r+1}"] = {"left": int(l_benches), "right": int(r_benches)}
 
-  st.header("4. Seat Blocking (Optional)")
+  st.header("4. Precise Seat Blocking")
   blocked_input = st.text_area(
-      "Block specific seats (Format: Room, Bench, Seat\nExample: Room 1, Bench"
-      " 2, Seat 4)",
+      "Block specific seats (Format: Room, Side Bench, Seat)\nExample: Room 1,"
+      " Left Bench 2, Seat 3\nRoom 1, Right Bench 1, Seat 4",
       value="",
   )
 
-# --- PARSE BLOCKED SEATS ---
+# --- PARSE PRECISE BLOCKED SEATS ---
 blocked_seats_set = set()
 if blocked_input.strip():
   for line in blocked_input.split("\n"):
     parts = [p.strip() for p in line.split(",")]
     if len(parts) == 3:
-      # e.g., Room 1, Bench 2, Seat 4 -> ("Room 1", 2, 4)
       try:
-        r_str = parts[0].title()
-        b_num = int(parts[1].lower().replace("bench", "").strip())
-        s_num = int(parts[2].lower().replace("seat", "").strip())
-        blocked_seats_set.add((r_str, b_num, s_num))
-      except:
+        r_str = parts[0].title().strip()  # e.g., "Room 1"
+        side_bench_part = (
+            parts[1].lower().strip()
+        )  # e.g., "left bench 2" or "right bench 1"
+        seat_part = parts[2].lower().strip()  # e.g., "seat 3"
+
+        # Extract side and local bench number
+        side = "left" if "left" in side_bench_part else "right"
+        b_num = int(
+            side_bench_part.replace("left", "")
+            .replace("right", "")
+            .replace("bench", "")
+            .strip()
+        )
+        s_num = int(seat_part.replace("seat", "").strip())
+
+        blocked_seats_set.add((r_str, side, b_num, s_num))
+      except Exception as e:
         pass
 
 # --- 3. ALLOCATION ENGINE ---
@@ -132,18 +144,20 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     st.success("Student data loaded successfully!")
 
-    # Calculate total capacity considering individual room configurations
+    # Calculate exact room capacities mapping out left/right structural blocks
     total_capacity = 0
-    room_bench_capacities = {}
     for r_name, layout in room_layouts.items():
-      total_benches = layout["left"] + layout["right"]
-      # Check available seats considering blocks
       valid_seats_in_room = 0
-      for b in range(1, total_benches + 1):
+      # Left Benches
+      for b in range(1, layout["left"] + 1):
         for s in range(1, 5):
-          if (r_name, b, s) not in blocked_seats_set:
+          if (r_name, "left", b, s) not in blocked_seats_set:
             valid_seats_in_room += 1
-      room_bench_capacities[r_name] = valid_seats_in_room
+      # Right Benches
+      for b in range(1, layout["right"] + 1):
+        for s in range(1, 5):
+          if (r_name, "right", b, s) not in blocked_seats_set:
+            valid_seats_in_room += 1
       total_capacity += valid_seats_in_room
 
     total_students = len(df)
@@ -155,7 +169,7 @@ if uploaded_file is not None:
     if total_students > total_capacity:
       st.warning(
           "⚠️ Warning: Total students exceed available unblocked seats!"
-          " Increase room benches or unblock seats."
+          " Increase room benches or unblock specific seats."
       )
 
     if st.button("🚀 Generate Seating Reports"):
@@ -167,7 +181,7 @@ if uploaded_file is not None:
           by=["Class", "Roll_Number"], kind="mergesort"
       ).reset_index(drop=True)
 
-      # Create single-gender bench groups (4 students per bench, distinct classes per bench)
+
       def create_benches(sub_df):
         students = sub_df.to_dict("records")
         benches = []
@@ -187,6 +201,7 @@ if uploaded_file is not None:
           benches.append(bench)
         return benches
 
+
       benches_m = create_benches(df[df["Gender_Clean"] == "M"])
       benches_f = create_benches(df[df["Gender_Clean"] == "F"])
       all_benches = benches_m + benches_f
@@ -194,48 +209,52 @@ if uploaded_file is not None:
           key=lambda b: min([str(student["Roll_Number"]) for student in b])
       )
 
-      # Distribute benches into rooms respecting room capacities & block filters
-      rooms_allocation = {r_name: [] for r_name in room_layouts.keys()}
+      # Build room structural slots considering side and bench counts
+      rooms_allocation = {r_name: {"left": [], "right": []} for r_name in room_layouts.keys()}
       room_keys = list(rooms_allocation.keys())
 
-      bench_idx = 0
-      for r_name in room_keys:
-        layout = room_layouts[r_name]
-        total_room_benches = layout["left"] + layout["right"]
-        for b_num in range(1, total_room_benches + 1):
-          if bench_idx < len(all_benches):
-            # Form bench checking blocked seats
-            bench = all_benches[bench_idx]
-            # Filter out blocked seats from this bench
-            filtered_bench = []
-            for s_idx, student in enumerate(bench):
-              seat_num = s_idx + 1
-              if (r_name, b_num, seat_num) not in blocked_seats_set:
-                filtered_bench.append((seat_num, student))
-            rooms_allocation[r_name].append(
-                {"bench_no": b_num, "occupants": filtered_bench}
-            )
-            bench_idx += 1
+      # Create structural slots for every room layout
+      room_slots = {}
+      for r_name, layout in room_layouts.items():
+        slots = []
+        # Left side slots
+        for b in range(1, layout["left"] + 1):
+          for s in range(1, 5):
+            if (r_name, "left", b, s) not in blocked_seats_set:
+              slots.append({"side": "left", "bench": b, "seat": s})
+        # Right side slots
+        for b in range(1, layout["right"] + 1):
+          for s in range(1, 5):
+            if (r_name, "right", b, s) not in blocked_seats_set:
+              slots.append({"side": "right", "bench": b, "seat": s})
+        room_slots[r_name] = slots
 
-      # If any leftover benches, overflow them into rooms sequentially
-      r_counter = 0
-      while bench_idx < len(all_benches):
-        r_name = room_keys[r_counter % len(room_keys)]
-        layout = room_layouts[r_name]
-        total_room_benches = layout["left"] + layout["right"]
-        next_b_num = len(rooms_allocation[r_name]) + 1
-        if next_b_num <= total_room_benches:
-          bench = all_benches[bench_idx]
-          filtered_bench = []
-          for s_idx, student in enumerate(bench):
-            seat_num = s_idx + 1
-            if (r_name, next_b_num, seat_num) not in blocked_seats_set:
-              filtered_bench.append((seat_num, student))
-          rooms_allocation[r_name].append(
-              {"bench_no": next_b_num, "occupants": filtered_bench}
-          )
-          bench_idx += 1
-        r_counter += 1
+      # Flatten all available unblocked slots sequentially across rooms
+      all_room_slots = []
+      # Round-robin combine slots across rooms so students distribute evenly
+      max_slots = max(len(s_list) for s_list in room_slots.values()) if room_slots else 0
+      for idx in range(max_slots):
+        for r_name in room_keys:
+          if idx < len(room_slots[r_name]):
+            all_room_slots.append(
+                (r_name, room_slots[r_name][idx])
+            )
+
+      # Assign students to slots sequentially
+      student_flat_list = [
+          student for bench in all_benches for student in bench
+      ]
+
+      room_assigned_seats = {r_name: [] for r_name in room_keys}
+      for i, student in enumerate(student_flat_list):
+        if i < len(all_room_slots):
+          r_name, slot_info = all_room_slots[i]
+          room_assigned_seats[r_name].append({
+              "side": slot_info["side"],
+              "bench": slot_info["bench"],
+              "seat": slot_info["seat"],
+              "student": student,
+          })
 
       st.markdown("---")
       st.header("📊 Generated System Reports")
@@ -244,13 +263,10 @@ if uploaded_file is not None:
       all_classes = sorted(df["Class"].unique())
       matrix_data = []
 
-      for r_name, r_benches_list in rooms_allocation.items():
+      for r_name in room_keys:
         r_counts = {"Room": r_name}
-        room_students = [
-            student
-            for rb in r_benches_list
-            for _, student in rb["occupants"]
-        ]
+        assigned = room_assigned_seats[r_name]
+        room_students = [item["student"] for item in assigned]
         occ_df = pd.DataFrame(room_students) if room_students else pd.DataFrame()
         for cls in all_classes:
           if not occ_df.empty and "Class" in occ_df.columns:
@@ -266,17 +282,14 @@ if uploaded_file is not None:
 
       # --- 2. BUILD CLASS-WISE ROLL NUMBERS REPORT ---
       class_roll_rows = []
-      for r_name, r_benches_list in rooms_allocation.items():
+      for r_name in room_keys:
         class_roll_rows.append({
             "Class / Room": f"--- {r_name} ---",
             "Student Count": "",
             "Roll Numbers": "",
         })
-        room_students = [
-            student
-            for rb in r_benches_list
-            for _, student in rb["occupants"]
-        ]
+        assigned = room_assigned_seats[r_name]
+        room_students = [item["student"] for item in assigned]
         if room_students:
           occ_df = pd.DataFrame(room_students)
           for cls_name, group in sorted(occ_df.groupby("Class")):
@@ -301,9 +314,9 @@ if uploaded_file is not None:
         class_roll_rows.pop()
       class_roll_df = pd.DataFrame(class_roll_rows)
 
-      # --- 3. BUILD ROOM-WISE SEATING PLAN GRID (Left Bench | Spacer | Right Bench) ---
+      # --- 3. BUILD ROOM-WISE SEATING PLAN GRID MAP ---
       seating_grid_rows = []
-      for r_name, r_benches_list in rooms_allocation.items():
+      for r_name in room_keys:
         seating_grid_rows.append({
             "Room Map": f"--- {r_name} Seating Map ---",
             "Left Bench No": "",
@@ -324,17 +337,14 @@ if uploaded_file is not None:
         right_b_count = layout["right"]
         max_rows = max(left_b_count, right_b_count)
 
-        # Map benches to left and right lists
-        left_benches_map = {}
-        right_benches_map = {}
-
-        for rb in r_benches_list:
-          b_num = rb["bench_no"]
-          # Determine if left or right based on bench index
-          if b_num <= left_b_count:
-            left_benches_map[b_num] = rb["occupants"]
-          else:
-            right_benches_map[b_num] = rb["occupants"]
+        # Organize assigned seats into a lookup dictionary
+        # dict structure: ('left', bench_num, seat_num) -> student string
+        seat_lookup = {}
+        for item in room_assigned_seats[r_name]:
+          s_key = (item["side"], item["bench"], item["seat"])
+          seat_lookup[s_key] = (
+              f"{item['student']['Roll_Number']} ({item['student']['Class']})"
+          )
 
         for row_idx in range(1, max_rows + 1):
           row_data = {
@@ -342,35 +352,19 @@ if uploaded_file is not None:
               "Left Bench No": f"Bench {row_idx}"
               if row_idx <= left_b_count
               else "",
-              "L_Seat 1": "",
-              "L_Seat 2": "",
-              "L_Seat 3": "",
-              "L_Seat 4": "",
+              "L_Seat 1": seat_lookup.get(("left", row_idx, 1), "[Blocked]" if (r_name, "left", row_idx, 1) in blocked_seats_set else ""),
+              "L_Seat 2": seat_lookup.get(("left", row_idx, 2), "[Blocked]" if (r_name, "left", row_idx, 2) in blocked_seats_set else ""),
+              "L_Seat 3": seat_lookup.get(("left", row_idx, 3), "[Blocked]" if (r_name, "left", row_idx, 3) in blocked_seats_set else ""),
+              "L_Seat 4": seat_lookup.get(("left", row_idx, 4), "[Blocked]" if (r_name, "left", row_idx, 4) in blocked_seats_set else ""),
               "Spacer": "|",
-              "Right Bench No": f"Bench {left_b_count + row_idx}"
+              "Right Bench No": f"Bench {row_idx}"
               if row_idx <= right_b_count
               else "",
-              "R_Seat 1": "",
-              "R_Seat 2": "",
-              "R_Seat 3": "",
-              "R_Seat 4": "",
+              "R_Seat 1": seat_lookup.get(("right", row_idx, 1), "[Blocked]" if (r_name, "right", row_idx, 1) in blocked_seats_set else ""),
+              "R_Seat 2": seat_lookup.get(("right", row_idx, 2), "[Blocked]" if (r_name, "right", row_idx, 2) in blocked_seats_set else ""),
+              "R_Seat 3": seat_lookup.get(("right", row_idx, 3), "[Blocked]" if (r_name, "right", row_idx, 3) in blocked_seats_set else ""),
+              "R_Seat 4": seat_lookup.get(("right", row_idx, 4), "[Blocked]" if (r_name, "right", row_idx, 4) in blocked_seats_set else ""),
           }
-
-          # Fill Left Bench
-          if row_idx <= left_b_count and row_idx in left_benches_map:
-            for seat_num, student in left_benches_map[row_idx]:
-              row_data[f"L_Seat {seat_num}"] = (
-                  f"{student['Roll_Number']} ({student['Class']})"
-              )
-
-          # Fill Right Bench (right bench numbers start after left count)
-          right_b_num = left_b_count + row_idx
-          if row_idx <= right_b_count and right_b_num in right_benches_map:
-            for seat_num, student in right_benches_map[right_b_num]:
-              row_data[f"R_Seat {seat_num}"] = (
-                  f"{student['Roll_Number']} ({student['Class']})"
-              )
-
           seating_grid_rows.append(row_data)
 
         seating_grid_rows.append({
@@ -414,7 +408,6 @@ if uploaded_file is not None:
       # --- GENERATE EXCEL WITH METADATA HEADER ROWS ---
       excel_buffer = io.BytesIO()
       with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-        # Sheet 1: Summary Matrix with Title Header
         meta_df1 = pd.DataFrame({
             "Exam Name": [exam_name],
             "Date": [exam_date],
@@ -426,7 +419,6 @@ if uploaded_file is not None:
             writer, sheet_name="Summary Matrix", startrow=3, index=True
         )
 
-        # Sheet 2: Class-Wise Roll Numbers
         meta_df2 = pd.DataFrame({
             "Exam Name": [exam_name],
             "Date": [exam_date],
@@ -441,7 +433,6 @@ if uploaded_file is not None:
             writer, sheet_name="Class-Wise Roll Numbers", startrow=3, index=False
         )
 
-        # Sheet 3: Room Seating Plans Grid
         meta_df3 = pd.DataFrame({
             "Exam Name": [exam_name],
             "Date": [exam_date],
