@@ -17,14 +17,14 @@ def generate_sample_excel():
         "Roll_Number": [
             "101",
             "102",
+            "103",
+            "104",
             "201",
             "202",
+            "203",
+            "204",
             "301",
             "302",
-            "401",
-            "402",
-            "501",
-            "502",
         ],
         "Name": [
             "Alice",
@@ -41,14 +41,14 @@ def generate_sample_excel():
         "Class": [
             "Class 1",
             "Class 1",
+            "Class 1",
+            "Class 1",
+            "Class 2",
+            "Class 2",
             "Class 2",
             "Class 2",
             "Class 3",
             "Class 3",
-            "Class 4",
-            "Class 4",
-            "Class 5",
-            "Class 5",
         ],
         "Gender": ["F", "M", "M", "F", "M", "F", "M", "F", "M", "F"],
     })
@@ -60,7 +60,7 @@ def generate_sample_excel():
 st.title("🎓 Automated Exam Seating Arrangement System")
 st.markdown(
     "Upload your student database, configure your rooms, and download your"
-    " strict 3-tab report package (Single-Gender Benches)."
+    " perfectly structured 3-tab report package."
 )
 
 with st.sidebar:
@@ -84,12 +84,13 @@ with st.sidebar:
       "Benches per Room (Total Benches)", min_value=2, value=10, step=2
   )
 
-# --- 3. SEATING ALLOCATION ENGINE (SINGLE-GENDER BENCHES) ---
+# --- 3. SEQUENTIAL & GENDER-CONSTRAINED ALLOCATION ENGINE ---
 
 
 def create_single_gender_benches(gender_df):
+  # Sort by roll number to ensure sequential ordering
+  gender_df = gender_df.sort_values(by="Roll_Number", kind="mergesort")
   students = gender_df.to_dict("records")
-  random.shuffle(students)
   benches = []
 
   while students:
@@ -120,7 +121,7 @@ if uploaded_file is not None:
     st.success("Student data loaded successfully!")
 
     total_students = len(df)
-    total_capacity = num_rooms * benches_per_room * 4
+    total_capacity = int(num_rooms) * int(benches_per_room) * 4
     st.info(
         f"Total Students: **{total_students}** | Total Room Seating Capacity:"
         f" **{total_capacity}**"
@@ -133,8 +134,11 @@ if uploaded_file is not None:
       )
 
     if st.button("🚀 Generate Seating Reports"):
-      # Separate by gender to enforce single-gender benches
+      # Clean Gender Column
       df["Gender_Clean"] = df["Gender"].astype(str).str.upper().str.strip()
+      df["Roll_Number"] = df["Roll_Number"].astype(str)
+
+      # Process benches independently for each gender, keeping sorting intact
       df_m = df[df["Gender_Clean"] == "M"]
       df_f = df[df["Gender_Clean"] == "F"]
 
@@ -142,14 +146,18 @@ if uploaded_file is not None:
       benches_f = create_single_gender_benches(df_f)
 
       all_benches = benches_m + benches_f
-      random.shuffle(all_benches)  # Mix male and female benches across rooms
+      # Sort benches by the minimum roll number inside them to guarantee sequential distribution
+      all_benches.sort(
+          key=lambda b: min([str(student["Roll_Number"]) for student in b])
+      )
 
-      # Distribute benches across rooms round-robin style
-      rooms_allocation = {f"Room {r+1}": [] for r in range(int(num_rooms))}
+      # Distribute benches sequentially across rooms so earlier rooms get earlier roll numbers
+      num_r = int(num_rooms)
+      rooms_allocation = {f"Room {r+1}": [] for r in range(num_r)}
       room_keys = list(rooms_allocation.keys())
 
       for idx, bench in enumerate(all_benches):
-        target_room = room_keys[idx % len(room_keys)]
+        target_room = room_keys[idx % num_r]
         rooms_allocation[target_room].append(bench)
 
       st.markdown("---")
@@ -177,41 +185,67 @@ if uploaded_file is not None:
       matrix_df["Total Students"] = matrix_df.sum(axis=1)
       matrix_df.loc["Total"] = matrix_df.sum()
 
-      # --- BUILD CLASS-WISE ROLL NUMBERS DATA ---
+      # --- BUILD CLASS-WISE ROLL NUMBERS REPORT (With Room Headers & Blank Rows) ---
       class_roll_rows = []
       for r_name, room_benches in rooms_allocation.items():
+        # Room Header Row
+        class_roll_rows.append({
+            "Class / Room": f"--- {r_name} ---",
+            "Student Count": "",
+            "Roll Numbers": "",
+        })
+
         room_students = [
             student for bench in room_benches for student in bench
         ]
         if room_students:
           occ_df = pd.DataFrame(room_students)
-          for cls_name, group in occ_df.groupby("Class"):
-            roll_list = ", ".join(str(r) for r in group["Roll_Number"].tolist())
+          for cls_name, group in sorted(occ_df.groupby("Class")):
+            sorted_rolls = sorted(group["Roll_Number"].tolist(), key=str)
+            roll_list = ", ".join(sorted_rolls)
             class_roll_rows.append({
-                "Room": r_name,
-                "Class": cls_name,
+                "Class / Room": cls_name,
                 "Student Count": len(group),
                 "Roll Numbers": roll_list,
             })
         else:
           for cls_name in all_classes:
             class_roll_rows.append({
-                "Room": r_name,
-                "Class": cls_name,
+                "Class / Room": cls_name,
                 "Student Count": 0,
                 "Roll Numbers": "",
             })
+        # Blank separator row between rooms
+        class_roll_rows.append({
+            "Class / Room": "",
+            "Student Count": "",
+            "Roll Numbers": "",
+        })
+
+      # Remove trailing blank row if present
+      if class_roll_rows and class_roll_rows[-1]["Class / Room"] == "":
+        class_roll_rows.pop()
+
       class_roll_df = pd.DataFrame(class_roll_rows)
 
-      # --- BUILD ROOM-WISE SEATING PLANS DATA ---
+      # --- BUILD ROOM-WISE SEATING PLANS REPORT (With Room Headers & Blank Rows) ---
       seating_plan_rows = []
       for r_name, room_benches in rooms_allocation.items():
+        # Room Header Row
+        seating_plan_rows.append({
+            "Room / Bench No": f"--- {r_name} ---",
+            "Side": "",
+            "Roll Number": "",
+            "Name": "",
+            "Class": "",
+            "Gender": "",
+        })
+
         if room_benches:
           for b_idx, bench in enumerate(room_benches):
             for s_idx, student in enumerate(bench):
               seating_plan_rows.append({
-                  "Room": r_name,
-                  "Bench No": f"Bench {b_idx+1}",
+                  "Room / Bench No": f"Bench {b_idx+1}",
                   "Side": "Left" if (s_idx < 2) else "Right",
                   "Roll Number": student["Roll_Number"],
                   "Name": student["Name"],
@@ -220,14 +254,27 @@ if uploaded_file is not None:
               })
         else:
           seating_plan_rows.append({
-              "Room": r_name,
-              "Bench No": "Bench 1",
+              "Room / Bench No": "Bench 1",
               "Side": "Left",
               "Roll Number": "",
               "Name": "",
               "Class": "",
               "Gender": "",
           })
+        # Blank separator row between rooms
+        seating_plan_rows.append({
+            "Room / Bench No": "",
+            "Side": "",
+            "Roll Number": "",
+            "Name": "",
+            "Class": "",
+            "Gender": "",
+        })
+
+      # Remove trailing blank row if present
+      if seating_plan_rows and seating_plan_rows[-1]["Room / Bench No"] == "":
+        seating_plan_rows.pop()
+
       seating_plan_df = pd.DataFrame(seating_plan_rows)
 
       # --- DISPLAY TABS ON WEB PAGE ---
@@ -242,13 +289,11 @@ if uploaded_file is not None:
         st.dataframe(matrix_df, use_container_width=True)
 
       with tab2:
-        st.subheader("Class-Wise Roll Numbers per Room")
+        st.subheader("Class-Wise Roll Numbers per Room (Sequential)")
         st.dataframe(class_roll_df, use_container_width=True)
 
       with tab3:
-        st.subheader(
-            "Complete Room-Wise Seating Plan (Strict Single-Gender Benches)"
-        )
+        st.subheader("Complete Room-Wise Seating Plan (Sequential)")
         st.dataframe(seating_plan_df, use_container_width=True)
 
       # --- GENERATE EXACT 3-TAB EXCEL FILE FOR DOWNLOAD ---
